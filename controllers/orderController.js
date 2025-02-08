@@ -97,17 +97,28 @@ const getOrdersByDate = async (req, res) => {
       createdAt: { $gte: startOfDay, $lte: endOfDay },
     });
 
-    const ordersData = await Promise.all(
+  
+
+     // Fetch food details for each item in all orders
+     const ordersWithFood = await Promise.all(
       orders.map(async (order) => {
+        const itemsWithFood = await Promise.all(
+          order.items.map(async (item) => {
+            const foodDetails = await Food.findById(item.food);
+            return { ...item.toObject(), foodDetails }; // Include item details with food
+          })
+        );
+
         const [user, table] = await Promise.all([
           User.findById(order.user),
           Table.findById(order.table),
         ]);
-        return { order, user, table };
+
+        return { order, user, table, items: itemsWithFood };
       })
     );
 
-    return res.status(200).json({ success: true, ordersData });
+    return res.status(200).json({ success: true, ordersData: ordersWithFood });
   } catch (error) {
     console.error("Error fetching orders:", error);
     return res
