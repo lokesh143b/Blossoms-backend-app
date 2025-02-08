@@ -1,7 +1,7 @@
 const User = require("../models/userModel");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcryptjs");
 const dotenv = require("dotenv");
 
 dotenv.config();
