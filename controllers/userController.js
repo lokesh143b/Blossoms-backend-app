@@ -3,14 +3,13 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
 
-
 // register user
 const registerUser = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phone } = req.body;
 
     // Validate input
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !phone) {
       return res
         .status(400)
         .json({ success: false, message: "All fields are required" });
@@ -28,7 +27,7 @@ const registerUser = async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Save user to database
-    const user = new User({ name, email, password: hashedPassword });
+    const user = new User({ name, email, password: hashedPassword, phone });
     await user.save();
 
     res
@@ -43,9 +42,22 @@ const registerUser = async (req, res) => {
 // login user
 const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { emailOrPhone, password } = req.body;
+    const cleanedInput = emailOrPhone.trim()
+    
+    let user;
+    if (/^\d{10}$/.test(cleanedInput)) {
+      // If input is a 10-digit number, treat it as a phone number
+      user = await User.findOne({ phone: cleanedInput });
+    } else if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanedInput)) {
+      // If input matches an email format, treat it as an email
+      user = await User.findOne({ email: cleanedInput });
+    } else {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid email or phone format" });
+    }
 
-    const user = await User.findOne({ email });
     if (!user) {
       return res
         .status(404)
@@ -68,6 +80,26 @@ const loginUser = async (req, res) => {
   } catch (error) {
     console.error("Error during login:", error.message);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// login with OTO
+const loginWithOTP = async (req, res) => {};
+
+const userPasswordChange = async (req, res) => {
+  const { newPassword, userId } = req.body;
+
+  try {
+    // Hash password
+    const user = await User.findById(userId);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    await user.save()
+
+    res.status(200).json({message:"Password changed successfully"})
+  } catch (error) {
+    console.error("Error in changing password:", error);
+    res.status(500).json({ message: "Error in changing password", error: error.message });
   }
 };
 
@@ -113,6 +145,7 @@ const removeFromCart = async (req, res) => {
 
     if (cartData[itemId] > 0) {
       cartData[itemId] -= 1;
+      if (cartData[itemId] === 0) delete cartData[itemId];
     }
 
     await User.findByIdAndUpdate(userId, { cart: cartData });
@@ -276,4 +309,6 @@ module.exports = {
   addProfileData,
   getUserProfile,
   addProfilePic,
+  loginWithOTP,
+  userPasswordChange,
 };

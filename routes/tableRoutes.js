@@ -5,8 +5,10 @@ const {
   deleteTable,
   tableOrders,
   updateTableOrderStatus,
-  completedOrder
+  completedOrder,
+  payment,verify
 } = require("../controllers/tableController");
+const authMiddleware = require("../config/authMiddleware");
 
 const router = express.Router();
 
@@ -16,5 +18,7 @@ router.post("/delete" , deleteTable) // localhost:4000/table/delete
 router.post("/table-orders" , tableOrders) // localhost:4000/table/table-orders
 router.post("/update-status" , updateTableOrderStatus) // localhost:4000/table/update-status
 router.post("/completed-order" , completedOrder) //localhost:4000/table/completed-order
+router.post("/payment", payment)  //localhost:4000/table/payment
+router.post("/verify-payment" , verify) //localhost:4000/table/verify-payment
  
 module.exports = router;

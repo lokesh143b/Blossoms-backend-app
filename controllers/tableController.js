@@ -3,6 +3,115 @@ const Table = require("../models/tableModel");
 const Order = require("../models/orderModel");
 const Food = require("../models/foodModel");
 const cancelOrderModel = require("../models/cancelOrderModel");
+const dotEnv = require("dotenv");
+const Stripe = require("stripe");
+
+dotEnv.config();
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// payment
+
+const payment = async (req, res) => {
+  const { tableId, orders } = req.body;
+
+  try {
+    if (!tableId || !orders || !Array.isArray(orders)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing or invalid details" });
+    }
+
+    // Process orders
+    const items = [];
+    for (let order of orders) {
+      if (order.foodItem && order.orderItem) {
+        items.push({ ...order.foodItem, ...order.orderItem });
+      } else {
+        return res.status(400).json({ success: false, message: "Invalid order format" });
+      }
+    }
+
+    let totalCost = 0; // Changed from const to let
+    for (let item of items) {
+      totalCost += item.price * item.quantity;
+    }
+
+    const line_items = items.map((item) => ({
+      price_data: {
+        currency: "inr",
+        product_data: {
+          name: item.name,
+        },
+        unit_amount: item.price * 100, // Convert price to paise (Stripe requires smallest currency unit)
+      },
+      quantity: item.quantity,
+    }));
+
+    // Add GST only if totalCost > 500
+    if (totalCost > 500) {
+      line_items.push({
+        price_data: {
+          currency: "inr",
+          product_data: {
+            name: "GST (18%)",
+          },
+          unit_amount: Math.round((totalCost * 18) / 100) * 100, // Round to avoid floating point issues
+        },
+        quantity: 1,
+      });
+    }
+
+    // Create Stripe checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: line_items,
+      mode: "payment",
+      success_url: `${process.env.FRONTEND_URL}/verify?success=true&tableId=${tableId}`,
+      cancel_url: `${process.env.FRONTEND_URL}/verify?success=false&tableId=${tableId}`,
+    });
+
+    res.json({ success: true, items, session_url: session.url });
+  } catch (error) {
+    console.error("Stripe Payment Error:", error);
+    res.status(500).json({ success: false, message: "Payment processing failed" });
+  }
+};
+
+
+// verify payment
+const verify = async (req, res) => {
+  try {
+    const { success, tableId } = req.body;
+
+    if (!success || !tableId) {
+      return res.status(400).json({ success: false, message: "Missing details" });
+    }
+
+    if (success === true) {
+      const table = await Table.findById(tableId);
+      if (!table) {
+        return res.status(404).json({ success: false, message: "Table not found" });
+      }
+
+      table.currentTableBill.payment = true;
+      const currentOrders = {
+        order: table.currentOrders,
+        tableBill: table.currentTableBill,
+      };
+      table.pastOrders.push(currentOrders);
+      table.currentOrders = [];
+      await table.save(); // Save the updated table
+
+      return res.status(200).json({ success: true, message: "Payment verified" });
+    }
+
+    res.status(400).json({ success: false, message: "Invalid success value" });
+  } catch (error) {
+    console.error("Error in verify function:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 
 // create new table
 const createTable = async (req, res) => {
@@ -50,7 +159,9 @@ const tableOrders = async (req, res) => {
     const table = await Table.findById(tableId);
 
     if (!table) {
-      return res.status(404).json({ success: false, message: "Table not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Table not found" });
     }
 
     const currentOrders = table.currentOrders;
@@ -62,7 +173,7 @@ const tableOrders = async (req, res) => {
 
     for (const orderId of currentOrders) {
       const order = await Order.findById(orderId);
-     
+
       if (!order) continue; // Skip if order not found
 
       total += order.total; // Sum up all orders' total
@@ -81,29 +192,36 @@ const tableOrders = async (req, res) => {
     table.currentTableBill = { total, GST, totalAmount };
     await table.save();
 
-    return res.status(200).json({ success: true, tableOrders, tableBill: table.currentTableBill });
+    return res
+      .status(200)
+      .json({ success: true, tableOrders, tableBill: table.currentTableBill });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 // update table order status
 const updateTableOrderStatus = async (req, res) => {
   const { orderId, tableId, foodId, status } = req.body;
   try {
     if (!orderId || !tableId || !foodId || !status) {
-      return res.status(400).json({ success: false, message: "All fields are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
     }
 
     const order = await Order.findById(orderId);
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found" });
     }
 
     const table = await Table.findById(tableId);
     if (!table) {
-      return res.status(404).json({ success: false, message: "Table not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Table not found" });
     }
 
     let itemFound = false;
@@ -144,7 +262,9 @@ const updateTableOrderStatus = async (req, res) => {
     }
 
     if (!itemFound) {
-      return res.status(404).json({ success: false, message: "Food item not found in the order" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Food item not found in the order" });
     }
 
     // Update Order totals
@@ -155,16 +275,25 @@ const updateTableOrderStatus = async (req, res) => {
 
     // Update Table totals
     table.currentTableBill.total -= totalReduction;
-    table.currentTableBill.GST = table.currentTableBill.total >= 500 ? (table.currentTableBill.total * 18) / 100 : 0;
-    table.currentTableBill.totalAmount = table.currentTableBill.total + table.currentTableBill.GST;
+    table.currentTableBill.GST =
+      table.currentTableBill.total >= 500
+        ? (table.currentTableBill.total * 18) / 100
+        : 0;
+    table.currentTableBill.totalAmount =
+      table.currentTableBill.total + table.currentTableBill.GST;
     await table.save();
 
-    return res.status(200).json({ success: true, message: "Order status updated successfully", status });
+    return res.status(200).json({
+      success: true,
+      message: "Order status updated successfully",
+      status,
+    });
   } catch (error) {
-    return res.status(500).json({ success: false, message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
   }
 };
-
 
 // delete table
 const deleteTable = async (req, res) => {
@@ -213,4 +342,6 @@ module.exports = {
   tableOrders,
   updateTableOrderStatus,
   completedOrder,
+  payment,
+  verify
 };
